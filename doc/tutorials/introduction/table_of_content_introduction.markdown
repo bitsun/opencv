@@ -6,6 +6,7 @@ Introduction to OpenCV {#tutorial_table_of_content_introduction}
 
 ##### Linux
 -   @subpage tutorial_linux_install
+-   @subpage tutorial_linux_gdb_pretty_printer
 -   @subpage tutorial_linux_gcc_cmake
 -   @subpage tutorial_linux_eclipse
 
@@ -25,9 +26,9 @@ Introduction to OpenCV {#tutorial_table_of_content_introduction}
 
 ##### Other platforms
 -   @subpage tutorial_macos_install
--   @subpage tutorial_ios_install
 -   @subpage tutorial_arm_crosscompile_with_cmake
 -   @subpage tutorial_building_tegra_cuda
+-   @ref tutorial_ios_install
 
 ##### Usage basics
 -   @subpage tutorial_display_image - We will learn how to load an image from file and display it using OpenCV

@@ -46,6 +46,7 @@
 #include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
+#include "../op_webnn.hpp"
 
 #include <opencv2/dnn/shape_utils.hpp>
 
@@ -55,6 +56,7 @@ using namespace cv::dnn::ocl4dnn;
 #endif
 
 #ifdef HAVE_CUDA
+#include "../cuda4dnn/primitives/matmul.hpp"
 #include "../cuda4dnn/primitives/inner_product.hpp"
 using namespace cv::dnn::cuda4dnn;
 #endif
@@ -132,7 +134,7 @@ public:
             CV_CheckEQ(blobs[0].dims, 2, "");
             numOutput = blobs[0].size[0];
             CV_Assert(!bias || (size_t)numOutput == blobs[1].total());
-            cAxis = clamp(axis, inputs[0]);
+            cAxis = normalize_axis(axis, inputs[0]);
         }
 
         MatShape outShape(cAxis + 1);
@@ -149,6 +151,7 @@ public:
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
                (backendId == DNN_BACKEND_HALIDE && haveHalide() && axis == 1) ||
+               (backendId == DNN_BACKEND_WEBNN && axis == 1) ||
                (((backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && !blobs.empty()) ||
                 backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) && axis == 1);
     }
@@ -167,7 +170,7 @@ public:
     class FullyConnected : public ParallelLoopBody
     {
     public:
-        FullyConnected() : srcMat(0), weights(0), biasMat(0), activ(0), dstMat(0), nstripes(0), useAVX(false), useAVX2(false), useAVX512(false) {}
+        FullyConnected() : srcMat(0), weights(0), biasMat(0), activ(0), dstMat(0), nstripes(0), useAVX(false), useAVX2(false), useAVX512(false), useRVV(false) {}
 
         static void run(const Mat& srcMat, const Mat& weights, const Mat& biasMat,
                         Mat& dstMat, const ActivationLayer* activ, int nstripes)
@@ -190,6 +193,7 @@ public:
             p.useAVX = checkHardwareSupport(CPU_AVX);
             p.useAVX2 = checkHardwareSupport(CPU_AVX2);
             p.useAVX512 = CV_CPU_HAS_SUPPORT_AVX512_SKX;
+            p.useRVV = checkHardwareSupport(CPU_RVV);
 
             parallel_for_(Range(0, nstripes), p, nstripes);
         }
@@ -226,17 +230,22 @@ public:
 
             #if CV_TRY_AVX512_SKX
                 if( useAVX512 )
-                    opt_AVX512_SKX::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize);
+                    opt_AVX512_SKX::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize_aligned);
                 else
             #endif
             #if CV_TRY_AVX2
                 if( useAVX2 )
-                    opt_AVX2::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize);
+                    opt_AVX2::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize_aligned);
                 else
             #endif
             #if CV_TRY_AVX
                 if( useAVX )
-                    opt_AVX::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize);
+                    opt_AVX::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize_aligned);
+                else
+            #endif
+            #if CV_TRY_RVV
+                if( useRVV )
+                    opt_RVV::fastGEMM1T( sptr, wptr, wstep, biasptr, dptr, nw, vecsize);
                 else
             #endif
                 {
@@ -245,16 +254,18 @@ public:
             #if CV_SIMD128
                     for( ; i <= nw - 4; i += 4, wptr += 4*wstep )
                     {
-                        v_float32x4 vs0 = v_setall_f32(0.f), vs1 = v_setall_f32(0.f);
-                        v_float32x4 vs2 = v_setall_f32(0.f), vs3 = v_setall_f32(0.f);
+                        v_float32x4 vs0 = v_setall_f32(0.f);
+                        v_float32x4 vs1 = v_setall_f32(0.f);
+                        v_float32x4 vs2 = v_setall_f32(0.f);
+                        v_float32x4 vs3 = v_setall_f32(0.f);
 
                         for( k = 0; k < vecsize; k += 4 )
                         {
                             v_float32x4 v = v_load_aligned(sptr + k);
-                            vs0 += v*v_load_aligned(wptr + k);
-                            vs1 += v*v_load_aligned(wptr + wstep + k);
-                            vs2 += v*v_load_aligned(wptr + wstep*2 + k);
-                            vs3 += v*v_load_aligned(wptr + wstep*3 + k);
+                            vs0 = v_fma(v, v_load_aligned(wptr + k), vs0);
+                            vs1 = v_fma(v, v_load_aligned(wptr + wstep + k), vs1);
+                            vs2 = v_fma(v, v_load_aligned(wptr + wstep*2 + k), vs2);
+                            vs3 = v_fma(v, v_load_aligned(wptr + wstep*3 + k), vs3);
                         }
 
                         v_float32x4 s = v_reduce_sum4(vs0, vs1, vs2, vs3);
@@ -290,6 +301,7 @@ public:
         bool useAVX;
         bool useAVX2;
         bool useAVX512;
+        bool useRVV;
     };
 
 #ifdef HAVE_OPENCL
@@ -354,7 +366,7 @@ public:
             return true;
         }
 
-        int axisCan = clamp(axis, inputs[0].dims);
+        int axisCan = normalize_axis(axis, inputs[0].dims);
         int numOutput = blobs[0].size[0];
         int innerSize = blobs[0].size[1];
         int outerSize = total(shape(inputs[0]), 0, axisCan);
@@ -475,7 +487,7 @@ public:
 
         if (!blobs.empty())
         {
-            int axisCan = clamp(axis, input[0].dims);
+            int axisCan = normalize_axis(axis, input[0].dims);
             int outerSize = input[0].total(0, axisCan);
 
             for (size_t i = 0; i < input.size(); i++)
@@ -521,10 +533,14 @@ public:
     {
         auto context = reinterpret_cast<csl::CSLContext*>(context_);
 
+        if (weightsMat.empty())
+        {
+            CV_Assert(!bias);
+            return make_cuda_node<cuda4dnn::MatMulOp>(preferableTarget, std::move(context->stream), std::move(context->cublas_handle));
+        }
+
         auto input_wrapper = inputs[0].dynamicCast<CUDABackendWrapper>();
-
-        auto flatten_start_axis = clamp(axis, input_wrapper->getRank());
-
+        auto flatten_start_axis = normalize_axis(axis, input_wrapper->getRank());
         auto biasMat_ = bias ? biasMat : Mat();
         return make_cuda_node<cuda4dnn::InnerProductOp>(preferableTarget, std::move(context->stream), std::move(context->cublas_handle), flatten_start_axis, weightsMat, biasMat_);
     }
@@ -603,6 +619,79 @@ public:
         return Ptr<BackendNode>(new InfEngineNgraphNode(matmul));
     }
 #endif  // HAVE_DNN_NGRAPH
+
+    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
+                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
+    {
+        if (blobs.empty())
+            return false;
+
+        int numOutput = blobs[0].size[0];
+        float inputScale = scales[0][0], outputScale = scales[1][0];
+        int inputZp = zeropoints[0][0];
+
+        Mat weightsQuantized(weightsMat.rows, weightsMat.cols, CV_8S);
+        Mat biasQuantized(1, numOutput, CV_32S);
+        Mat outputMultiplier(1, numOutput, CV_32F);
+
+        double realMin, realMax, weightsScale;
+        for( int i = 0; i < numOutput; i++ )
+        {
+            // Quantize weights
+            cv::minMaxIdx(weightsMat.row(i), &realMin, &realMax);
+            realMin = std::min(realMin, 0.0);
+            realMax = std::max(realMax, 0.0);
+            weightsScale = (realMax == realMin) ? 1.0 : std::max(-realMin, realMax)/127;
+            weightsMat.row(i).convertTo(weightsQuantized.row(i), CV_8S, 1.f/weightsScale);
+
+            // Quantize biases
+            float biasScale = inputScale * weightsScale;
+            biasQuantized.at<int>(i) = (int)std::round(biasMat.at<float>(i)/biasScale) - inputZp*(cv::sum(weightsQuantized.row(i))[0]);
+
+            // Store multiplier
+            outputMultiplier.at<float>(i) = biasScale / outputScale;
+        }
+
+        params.blobs.clear();
+        params.blobs.push_back(weightsQuantized.reshape(1, shape(blobs[0])));
+        params.blobs.push_back(biasQuantized);
+        params.blobs.push_back(outputMultiplier);
+        return true;
+    }
+
+#ifdef HAVE_WEBNN
+    virtual Ptr<BackendNode> initWebnn(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        Ptr<WebnnBackendNode> node = nodes[0].dynamicCast<WebnnBackendNode>();
+        auto& webnnInpOperand = node->operand;
+        auto& webnnGraphBuilder = node->net->builder;
+        ml::GemmOptions gemmOptions = {};
+        if (bias)
+        {
+            std::vector<int32_t> biasDims = {(int32_t)blobs[1].size[1]};
+            ml::Operand bias = webnn::BuildConstant(webnnGraphBuilder, biasDims, blobs[1].data, blobs[1].total()*blobs[1].elemSize(), ml::OperandType::Float32);
+            gemmOptions.c = bias;
+        }
+        ml::Operand result = nullptr;
+        if (nodes.size() == 2)
+        {
+            auto& inp2 = nodes[1].dynamicCast<WebnnBackendNode>()->operand;
+            result = webnnGraphBuilder.Gemm(webnnInpOperand, inp2, &gemmOptions);
+        }
+        else
+        {
+            std::vector<int32_t> input_shape(2, -1);
+            input_shape[1] = blobs[0].size[1];
+            ml::Operand webnnInpOperand_reshaped = webnnGraphBuilder.Reshape(webnnInpOperand, input_shape.data(), input_shape.size());
+            std::vector<int32_t> weight_shape = {(int32_t)blobs[0].size[0], (int32_t)blobs[0].size[1]};
+            // std::cout<<"weight size: "<<weight_shape[1]<<" "<<weight_shape[0]<<std::endl;
+            ml::Operand inp2 = webnn::BuildConstant(webnnGraphBuilder, weight_shape, blobs[0].data, blobs[0].total()*blobs[0].elemSize(), ml::OperandType::Float32);
+            gemmOptions.bTranspose = true;
+            result = webnnGraphBuilder.Gemm(webnnInpOperand_reshaped, inp2, &gemmOptions);
+        }
+        return Ptr<BackendNode>(new WebnnBackendNode(result));
+    }
+#endif // HAVE_WEBNN
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE

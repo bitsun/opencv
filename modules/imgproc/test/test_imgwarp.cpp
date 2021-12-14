@@ -169,7 +169,7 @@ int CV_ImgWarpBaseTest::prepare_test_case( int test_case_idx )
             }
             break;
         default:
-            assert(0);
+            CV_Assert(0);
         }
 
         /*switch( depth )
@@ -187,7 +187,7 @@ int CV_ImgWarpBaseTest::prepare_test_case( int test_case_idx )
                 ((float*)ptr)[j] = (float)buffer[j];
             break;
         default:
-            assert(0);
+            CV_Assert(0);
         }*/
         cv::Mat src(1, cols*cn, CV_32F, &buffer[0]);
         cv::Mat dst(1, cols*cn, depth, ptr);
@@ -482,7 +482,7 @@ static void test_remap( const Mat& src, Mat& dst, const Mat& mapx, const Mat& ma
                 }
                 break;
             default:
-                assert(0);
+                CV_Assert(0);
             }
         }
     }
@@ -1472,6 +1472,26 @@ TEST(Imgproc_Warp, multichannel)
         ASSERT_EQ(0.0, cvtest::norm(dst, NORM_INF));
     }
 }
+
+
+TEST(Imgproc_Warp, regression_19566)  // valgrind should detect problem if any
+{
+    const Size imgSize(8192, 8);
+
+    Mat inMat = Mat::zeros(imgSize, CV_8UC4);
+    Mat outMat = Mat::zeros(imgSize, CV_8UC4);
+
+    warpAffine(
+        inMat,
+        outMat,
+        getRotationMatrix2D(Point2f(imgSize.width / 2.0f, imgSize.height / 2.0f), 45.0, 1.0),
+        imgSize,
+        INTER_LINEAR,
+        cv::BORDER_CONSTANT,
+        cv::Scalar(0.0, 0.0, 0.0, 255.0)
+    );
+}
+
 
 TEST(Imgproc_GetAffineTransform, singularity)
 {

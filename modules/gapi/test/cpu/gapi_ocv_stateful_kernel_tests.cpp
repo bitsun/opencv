@@ -43,22 +43,6 @@ namespace opencv_test
 //----------------------------------------------- Simple tests ------------------------------------------------
 namespace
 {
-    inline void initTestDataPath()
-    {
-#ifndef WINRT
-        static bool initialized = false;
-        if (!initialized)
-        {
-            // Since G-API has no own test data (yet), it is taken from the common space
-            const char* testDataPath = getenv("OPENCV_TEST_DATA_PATH");
-            GAPI_Assert(testDataPath != nullptr);
-
-            cvtest::addDataSearchPath(testDataPath);
-            initialized = true;
-        }
-#endif // WINRT
-    }
-
     G_TYPED_KERNEL(GCountCalls, <cv::GOpaque<int>(GMat)>, "org.opencv.test.count_calls")
     {
         static GOpaqueDesc outMeta(GMatDesc /* in */) { return empty_gopaque_desc(); }
@@ -181,8 +165,6 @@ TEST(StatefulKernel, StateIsMutableInRuntime)
 
 TEST(StatefulKernel, StateIsAutoResetForNewStream)
 {
-    initTestDataPath();
-
     cv::GMat in;
     cv::GOpaque<bool> out = GIsStateUpToDate::on(in);
     cv::GComputation c(cv::GIn(in), cv::GOut(out));
@@ -192,8 +174,12 @@ TEST(StatefulKernel, StateIsAutoResetForNewStream)
     // Compilation & testing
     auto ccomp = c.compileStreaming(cv::compile_args(pkg));
 
-    ccomp.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
-                               (findDataFile("cv/video/768x576.avi")));
+    auto path = findDataFile("cv/video/768x576.avi");
+    try {
+        ccomp.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(path));
+    } catch(...) {
+        throw SkipTestException("Video file can not be opened");
+    }
     ccomp.start();
     EXPECT_TRUE(ccomp.running());
 
@@ -204,8 +190,12 @@ TEST(StatefulKernel, StateIsAutoResetForNewStream)
     }
     EXPECT_FALSE(ccomp.running());
 
-    ccomp.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
-                               (findDataFile("cv/video/1920x1080.avi")));
+    path = findDataFile("cv/video/1920x1080.avi");
+    try {
+        ccomp.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(path));
+    } catch(...) {
+        throw SkipTestException("Video file can not be opened");
+    }
     ccomp.start();
     EXPECT_TRUE(ccomp.running());
 
@@ -321,8 +311,6 @@ namespace
 
 TEST(StatefulKernel, StateIsInitViaCompArgsInStreaming)
 {
-    initTestDataPath();
-
     // G-API graph declaration
     cv::GMat in;
     cv::GMat out = GBackSub::on(in);
@@ -335,14 +323,22 @@ TEST(StatefulKernel, StateIsInitViaCompArgsInStreaming)
                            cv::compile_args(pkg, BackSubStateParams { "knn" }));
 
     // Testing G-API Background Substractor in streaming mode
-    gapiBackSub.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
-                               (findDataFile("cv/video/768x576.avi")));
+    auto path = findDataFile("cv/video/768x576.avi");
+    try {
+        gapiBackSub.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(path));
+    } catch(...) {
+        throw SkipTestException("Video file can not be opened");
+    }
     // Allowing 1% difference of all pixels between G-API and reference OpenCV results
     testBackSubInStreaming(gapiBackSub, 1);
 
-    // Additionally, test the case when the new stream happens
-    gapiBackSub.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>
-                               (findDataFile("cv/video/1920x1080.avi")));
+    path = findDataFile("cv/video/1920x1080.avi");
+    try {
+        // Additionally, test the case when the new stream happens
+        gapiBackSub.setSource(gapi::wip::make_src<cv::gapi::wip::GCaptureSource>(path));
+    } catch(...) {
+        throw SkipTestException("Video file can not be opened");
+    }
     // Allowing 5% difference of all pixels between G-API and reference OpenCV results
     testBackSubInStreaming(gapiBackSub, 5);
 }

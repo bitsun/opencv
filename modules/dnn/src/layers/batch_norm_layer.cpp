@@ -15,6 +15,7 @@ Implementation of Batch Normalization layer.
 #include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
+#include "../op_webnn.hpp"
 
 #include <opencv2/dnn/shape_utils.hpp>
 
@@ -35,6 +36,7 @@ namespace dnn
 class BatchNormLayerImpl CV_FINAL : public BatchNormLayer
 {
 public:
+    Mat origin_weights, origin_bias;
     Mat weights_, bias_;
     UMat umat_weight, umat_bias;
     mutable int dims;
@@ -88,11 +90,11 @@ public:
         const float* weightsData = hasWeights ? blobs[weightsBlobIndex].ptr<float>() : 0;
         const float* biasData = hasBias ? blobs[biasBlobIndex].ptr<float>() : 0;
 
-        weights_.create(1, (int)n, CV_32F);
-        bias_.create(1, (int)n, CV_32F);
+        origin_weights.create(1, (int)n, CV_32F);
+        origin_bias.create(1, (int)n, CV_32F);
 
-        float* dstWeightsData = weights_.ptr<float>();
-        float* dstBiasData = bias_.ptr<float>();
+        float* dstWeightsData = origin_weights.ptr<float>();
+        float* dstBiasData = origin_bias.ptr<float>();
 
         for (size_t i = 0; i < n; ++i)
         {
@@ -100,15 +102,12 @@ public:
             dstWeightsData[i] = w;
             dstBiasData[i] = (hasBias ? biasData[i] : 0.0f) - w * meanData[i] * varMeanScale;
         }
-        // We will use blobs to store origin weights and bias to restore them in case of reinitialization.
-        weights_.copyTo(blobs[0].reshape(1, 1));
-        bias_.copyTo(blobs[1].reshape(1, 1));
     }
 
     virtual void finalize(InputArrayOfArrays, OutputArrayOfArrays) CV_OVERRIDE
     {
-        blobs[0].reshape(1, 1).copyTo(weights_);
-        blobs[1].reshape(1, 1).copyTo(bias_);
+        origin_weights.reshape(1, 1).copyTo(weights_);
+        origin_bias.reshape(1, 1).copyTo(bias_);
     }
 
     void getScaleShift(Mat& scale, Mat& shift) const CV_OVERRIDE
@@ -174,6 +173,7 @@ public:
         return (backendId == DNN_BACKEND_OPENCV) ||
                backendId == DNN_BACKEND_CUDA ||
                (backendId == DNN_BACKEND_HALIDE && haveHalide()) ||
+               backendId == DNN_BACKEND_WEBNN ||
                ((backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 || backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH) && haveInfEngine() && (preferableTarget == DNN_TARGET_CPU || dims == 4));
     }
 
@@ -240,7 +240,7 @@ public:
                 kernel.set(4, ocl::KernelArg::PtrReadOnly(umat_weight));
                 kernel.set(5, ocl::KernelArg::PtrReadOnly(umat_bias));
                 kernel.set(6, ocl::KernelArg::PtrWriteOnly(dst));
-                bool ret = kernel.run(2, global, NULL, false);
+                bool ret = kernel.run_(2, global, NULL, false);
                 if (!ret)
                     return false;
             }
@@ -401,11 +401,48 @@ public:
         shape[1] = weights_.total();
         auto weight = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape(shape), weights_.data);
         auto bias = std::make_shared<ngraph::op::Constant>(ngraph::element::f32, ngraph::Shape(shape), bias_.data);
+#if INF_ENGINE_VER_MAJOR_GT(INF_ENGINE_RELEASE_2021_2)
+        auto scale_node = std::make_shared<ngraph::op::v1::Multiply>(ieInpNode, weight, ngraph::op::AutoBroadcastType::NUMPY);
+#else
         auto scale_node = std::make_shared<ngraph::op::v0::Multiply>(ieInpNode, weight, ngraph::op::AutoBroadcastType::NUMPY);
+#endif
         auto scale_shift = std::make_shared<ngraph::op::v1::Add>(scale_node, bias, ngraph::op::AutoBroadcastType::NUMPY);
         return Ptr<BackendNode>(new InfEngineNgraphNode(scale_shift));
     }
 #endif  // HAVE_DNN_NGRAPH
+
+    virtual bool tryQuantize(const std::vector<std::vector<float> > &scales,
+                             const std::vector<std::vector<int> > &zeropoints, LayerParams& params) CV_OVERRIDE
+    {
+        params.set("input_scale", scales[0][0]);
+        params.set("input_zeropoint", zeropoints[0][0]);
+
+        params.blobs.clear();
+        params.blobs.push_back(origin_weights);
+        params.blobs.push_back(origin_bias);
+        return true;
+    }
+
+#ifdef HAVE_WEBNN
+    virtual Ptr<BackendNode> initWebnn(const std::vector<Ptr<BackendWrapper> >& inputs, const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
+    {
+        Ptr<WebnnBackendNode> node = nodes[0].dynamicCast<WebnnBackendNode>();
+        auto& webnnInpOperand = node->operand;
+        auto& webnnGraphBuilder = node->net->builder;
+        std::vector<int32_t> weights_shape = webnn::getShape(weights_);
+        ml::Operand weights = webnn::BuildConstant(webnnGraphBuilder, weights_shape, weights_.data, weights_.total()*weights_.elemSize(), ml::OperandType::Float32);
+        std::vector<int32_t> shape(dims, 1);
+        shape[1] = weights_shape[1];
+        ml::Operand weights_reshaped = webnnGraphBuilder.Reshape(weights, shape.data(), shape.size());
+        ml::Operand mul_res = webnnGraphBuilder.Mul(webnnInpOperand, weights_reshaped);
+        std::vector<int32_t> bias_shape = webnn::getShape(bias_);
+        ml::Operand bias = webnn::BuildConstant(webnnGraphBuilder, bias_shape, bias_.data, bias_.total()*bias_.elemSize(), ml::OperandType::Float32);
+        shape[1] = bias_shape[1];
+        ml::Operand bias_reshaped = webnnGraphBuilder.Reshape(bias, shape.data(), shape.size());
+        ml::Operand add_res = webnnGraphBuilder.Add(mul_res, bias_reshaped);
+        return Ptr<BackendNode>(new WebnnBackendNode(add_res));
+    }
+#endif
 
     virtual int64 getFLOPS(const std::vector<MatShape> &inputs,
                            const std::vector<MatShape> &outputs) const CV_OVERRIDE

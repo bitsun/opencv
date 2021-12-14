@@ -2,6 +2,7 @@
 // It is subject to the license terms in the LICENSE file found in the top-level directory
 // of this distribution and at http://opencv.org/license.html.
 #include "test_precomp.hpp"
+#include <cmath>
 
 namespace opencv_test { namespace {
 
@@ -189,7 +190,7 @@ TEST(Core_OutputArrayCreate, _13772)
 TEST(Core_String, find_last_of__with__empty_string)
 {
     cv::String s;
-    size_t p = s.find_last_of("q", 0);
+    size_t p = s.find_last_of('q', 0);
     // npos is not exported: EXPECT_EQ(cv::String::npos, p);
     EXPECT_EQ(std::string::npos, p);
 }
@@ -782,6 +783,74 @@ TEST(Core_Check, testSize_1)
         FAIL() << "Unexpected unknown exception";
     }
 }
+
+TEST(Core_Allocation, alignedAllocation)
+{
+    // iterate from size=1 to approximate byte size of 8K 32bpp image buffer
+    for (int i = 0; i < 200; i++) {
+        const size_t size = static_cast<size_t>(std::pow(1.091, (double)i));
+        void * const buf = cv::fastMalloc(size);
+        ASSERT_NE((uintptr_t)0, (uintptr_t)buf)
+            << "failed to allocate memory";
+        ASSERT_EQ((uintptr_t)0, (uintptr_t)buf % CV_MALLOC_ALIGN)
+            << "memory not aligned to " << CV_MALLOC_ALIGN;
+        cv::fastFree(buf);
+    }
+}
+
+
+#if !(defined(__GNUC__) && __GNUC__ < 5)  // GCC 4.8 emits: 'is_trivially_copyable' is not a member of 'std'
+TEST(Core_Types, trivially_copyable)
+{
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Complexd>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Point>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Point3f>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Size>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Range>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Rect>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::RotatedRect>::value);
+    //EXPECT_TRUE(std::is_trivially_copyable<cv::Scalar>::value);  // derived from Vec (Matx)
+}
+
+TEST(Core_Types, trivially_copyable_extra)
+{
+    EXPECT_TRUE(std::is_trivially_copyable<cv::KeyPoint>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::DMatch>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::TermCriteria>::value);
+    EXPECT_TRUE(std::is_trivially_copyable<cv::Moments>::value);
+}
+#endif
+
+template <typename T> class Rect_Test : public testing::Test {};
+
+TYPED_TEST_CASE_P(Rect_Test);
+
+// Reimplement C++11 std::numeric_limits<>::lowest.
+template<typename T> T cv_numeric_limits_lowest();
+template<> int cv_numeric_limits_lowest<int>() { return INT_MIN; }
+template<> float cv_numeric_limits_lowest<float>() { return -FLT_MAX; }
+template<> double cv_numeric_limits_lowest<double>() { return -DBL_MAX; }
+
+TYPED_TEST_P(Rect_Test, Overflows) {
+  typedef Rect_<TypeParam> R;
+  TypeParam num_max = std::numeric_limits<TypeParam>::max();
+  TypeParam num_lowest = cv_numeric_limits_lowest<TypeParam>();
+  EXPECT_EQ(R(0, 0, 10, 10), R(0, 0, 10, 10) & R(0, 0, 10, 10));
+  EXPECT_EQ(R(5, 6, 4, 3), R(0, 0, 10, 10) & R(5, 6, 4, 3));
+  EXPECT_EQ(R(5, 6, 3, 2), R(0, 0, 8, 8) & R(5, 6, 4, 3));
+  // Test with overflowing dimenions.
+  EXPECT_EQ(R(5, 0, 5, 10), R(0, 0, 10, 10) & R(5, 0, num_max, num_max));
+  // Test with overflowing dimensions for floats/doubles.
+  EXPECT_EQ(R(num_max, 0, num_max / 4, 10), R(num_max, 0, num_max / 2, 10) & R(num_max, 0, num_max / 4, 10));
+  // Test with overflowing coordinates.
+  EXPECT_EQ(R(), R(20, 0, 10, 10) & R(num_lowest, 0, 10, 10));
+  EXPECT_EQ(R(), R(20, 0, 10, 10) & R(0, num_lowest, 10, 10));
+  EXPECT_EQ(R(), R(num_lowest, 0, 10, 10) & R(0, num_lowest, 10, 10));
+}
+REGISTER_TYPED_TEST_CASE_P(Rect_Test, Overflows);
+
+typedef ::testing::Types<int, float, double> RectTypes;
+INSTANTIATE_TYPED_TEST_CASE_P(Negative_Test, Rect_Test, RectTypes);
 
 
 }} // namespace

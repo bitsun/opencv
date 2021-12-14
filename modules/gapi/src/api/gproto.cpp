@@ -146,6 +146,7 @@ cv::GMetaArg cv::descr_of(const cv::GRunArgP &argp)
 #endif //  !defined(GAPI_STANDALONE)
     case GRunArgP::index_of<cv::Mat*>():               return GMetaArg(cv::descr_of(*util::get<cv::Mat*>(argp)));
     case GRunArgP::index_of<cv::Scalar*>():            return GMetaArg(descr_of(*util::get<cv::Scalar*>(argp)));
+    case GRunArgP::index_of<cv::MediaFrame*>():        return GMetaArg(descr_of(*util::get<cv::MediaFrame*>(argp)));
     case GRunArgP::index_of<cv::detail::VectorRef>():  return GMetaArg(util::get<cv::detail::VectorRef>(argp).descr_of());
     case GRunArgP::index_of<cv::detail::OpaqueRef>():  return GMetaArg(util::get<cv::detail::OpaqueRef>(argp).descr_of());
     default: util::throw_error(std::logic_error("Unsupported GRunArgP type"));
@@ -163,6 +164,7 @@ bool cv::can_describe(const GMetaArg& meta, const GRunArgP& argp)
     case GRunArgP::index_of<cv::Mat*>():               return util::holds_alternative<GMatDesc>(meta) &&
                                                               util::get<GMatDesc>(meta).canDescribe(*util::get<cv::Mat*>(argp));
     case GRunArgP::index_of<cv::Scalar*>():            return meta == GMetaArg(cv::descr_of(*util::get<cv::Scalar*>(argp)));
+    case GRunArgP::index_of<cv::MediaFrame*>():        return meta == GMetaArg(cv::descr_of(*util::get<cv::MediaFrame*>(argp)));
     case GRunArgP::index_of<cv::detail::VectorRef>():  return meta == GMetaArg(util::get<cv::detail::VectorRef>(argp).descr_of());
     case GRunArgP::index_of<cv::detail::OpaqueRef>():  return meta == GMetaArg(util::get<cv::detail::OpaqueRef>(argp).descr_of());
     default: util::throw_error(std::logic_error("Unsupported GRunArgP type"));
@@ -199,6 +201,52 @@ bool cv::can_describe(const GMetaArgs &metas, const GRunArgs &args)
                      });
 }
 
+void cv::gimpl::proto::validate_input_meta_arg(const cv::GMetaArg& meta)
+{
+    switch (meta.index())
+    {
+        case cv::GMetaArg::index_of<cv::GMatDesc>():
+        {
+            cv::gimpl::proto::validate_input_meta(cv::util::get<GMatDesc>(meta)); //may throw
+            break;
+        }
+        default:
+            break;
+    }
+}
+
+void cv::gimpl::proto::validate_input_meta(const cv::GMatDesc& meta)
+{
+    if (meta.dims.empty())
+    {
+        if (!(meta.size.height > 0 && meta.size.width > 0))
+        {
+            cv::util::throw_error
+                (std::logic_error(
+                 "Image format is invalid. Size must contain positive values"
+                 ", got width: " + std::to_string(meta.size.width ) +
+                 (", height: ") + std::to_string(meta.size.height)));
+        }
+
+        if (!(meta.chan > 0))
+        {
+            cv::util::throw_error
+                (std::logic_error(
+                 "Image format is invalid. Channel mustn't be negative value, got channel: " +
+                 std::to_string(meta.chan)));
+        }
+    }
+
+    if (!(meta.depth >= 0))
+    {
+        cv::util::throw_error
+            (std::logic_error(
+             "Image format is invalid. Depth must be positive value, got depth: " +
+             std::to_string(meta.depth)));
+    }
+    // All checks are ok
+}
+
 // FIXME: Is it tested for all types?
 // FIXME: Where does this validation happen??
 void cv::validate_input_arg(const GRunArg& arg)
@@ -210,13 +258,15 @@ void cv::validate_input_arg(const GRunArg& arg)
     case GRunArg::index_of<cv::UMat>():
     {
         const auto desc = cv::descr_of(util::get<cv::UMat>(arg));
-        GAPI_Assert(desc.size.height != 0 && desc.size.width != 0 && "incorrect dimensions of cv::UMat!"); break;
+        cv::gimpl::proto::validate_input_meta(desc); //may throw
+        break;
     }
 #endif //  !defined(GAPI_STANDALONE)
     case GRunArg::index_of<cv::Mat>():
     {
         const auto desc = cv::descr_of(util::get<cv::Mat>(arg));
-        GAPI_Assert(desc.size.height != 0 && desc.size.width != 0 && "incorrect dimensions of Mat!"); break;
+        cv::gimpl::proto::validate_input_meta(desc); //may throw
+        break;
     }
     default:
         // No extra handling
@@ -288,6 +338,8 @@ const void* cv::gimpl::proto::ptr(const GRunArgP &arg)
         return cv::util::get<cv::detail::VectorRef>(arg).ptr();
     case GRunArgP::index_of<cv::detail::OpaqueRef>():
         return cv::util::get<cv::detail::OpaqueRef>(arg).ptr();
+    case GRunArgP::index_of<cv::MediaFrame*>():
+        return static_cast<const void*>(cv::util::get<cv::MediaFrame*>(arg));
     default:
         util::throw_error(std::logic_error("Unknown GRunArgP type!"));
     }

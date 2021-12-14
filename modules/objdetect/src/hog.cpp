@@ -120,6 +120,12 @@ void HOGDescriptor::setSVMDetector(InputArray _svmDetector)
     _svmDetector.getMat().convertTo(svmDetector, CV_32F);
     CV_Assert(checkDetectorSize());
 
+    if (_svmDetector.empty())
+    {
+        oclSvmDetector = UMat();
+        return;
+    }
+
     Mat detector_reordered(1, (int)svmDetector.size(), CV_32FC1);
 
     size_t block_hist_size = getBlockHistogramSize(blockSize, cellSize, nbins);
@@ -848,7 +854,7 @@ void HOGCache::init(const HOGDescriptor* _descriptor,
             data->gradWeight = weights(i,j);
         }
 
-    assert( count1 + count2 + count4 == rawBlockSize );
+    CV_Assert( count1 + count2 + count4 == rawBlockSize );
     // defragment pixData
     for( j = 0; j < count2; j++ )
         pixData[j + count1] = pixData[j + rawBlockSize];
@@ -870,7 +876,7 @@ void HOGCache::init(const HOGDescriptor* _descriptor,
 const float* HOGCache::getBlock(Point pt, float* buf)
 {
     float* blockHist = buf;
-    assert(descriptor != 0);
+    CV_Assert(descriptor != 0);
 
 //    Size blockSize = descriptor->blockSize;
     pt += imgoffset;

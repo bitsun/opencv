@@ -1,5 +1,5 @@
 //
-//  Mat+UIImage.mm
+//  Mat+Converters.mm
 //
 //  Created by Giles Payne on 2020/03/03.
 //
@@ -8,6 +8,22 @@
 #import <opencv2/imgcodecs/ios.h>
 
 @implementation Mat (Converters)
+
+-(CGImageRef)toCGImage {
+    return MatToCGImage(self.nativeRef);
+}
+
+-(instancetype)initWithCGImage:(CGImageRef)image {
+    return [self initWithCGImage:image alphaExist:NO];
+}
+
+-(instancetype)initWithCGImage:(CGImageRef)image alphaExist:(BOOL)alphaExist {
+    self = [self init];
+    if (self) {
+        CGImageToMat(image, self.nativeRef, (bool)alphaExist);
+    }
+    return self;
+}
 
 -(UIImage*)toUIImage {
     return MatToUIImage(self.nativeRef);

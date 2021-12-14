@@ -94,7 +94,7 @@ TYPED_TEST(RMatTypedTest, CorrectAdapterCast) {
     EXPECT_NE(nullptr, this->rmat().template get<T>());
 }
 
-class DummyAdapter : public RMat::Adapter {
+class DummyAdapter : public RMat::IAdapter {
     virtual RMat::View access(RMat::Access) override { return {}; }
     virtual cv::GMatDesc desc() const override { return {}; }
 };
@@ -103,7 +103,7 @@ TYPED_TEST(RMatTypedTest, IncorrectAdapterCast) {
     EXPECT_EQ(nullptr, this->rmat().template get<DummyAdapter>());
 }
 
-class RMatAdapterForBackend : public RMat::Adapter {
+class RMatAdapterForBackend : public RMat::IAdapter {
     int m_i;
 public:
     RMatAdapterForBackend(int i) : m_i(i) {}
@@ -116,11 +116,11 @@ public:
 // we have some specific data hidden under RMat,
 // test that we can obtain it via RMat.as<T>() method
 TEST(RMat, UsageInBackend) {
-    int i = std::rand();
+    int i = 123456;
     auto rmat = cv::make_rmat<RMatAdapterForBackend>(i);
 
     auto adapter = rmat.get<RMatAdapterForBackend>();
-    EXPECT_NE(nullptr, adapter);
+    ASSERT_NE(nullptr, adapter);
     EXPECT_EQ(i, adapter->deviceSpecificData());
 }
 } // namespace opencv_test

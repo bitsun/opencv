@@ -286,7 +286,7 @@ public:
                             current_score = quality->getScore(models[i]);
                         } else {
                             if (is_magsac && iters % repeat_magsac == 0) {
-                                if (!local_optimization->refineModel
+                                if (local_optimization && !local_optimization->refineModel
                                         (models[i], best_score_thread, models[i], current_score))
                                     continue;
                             } else if (model_verifier->isModelGood(models[i])) {
@@ -408,10 +408,11 @@ int mergePoints (InputArray pts1_, InputArray pts2_, Mat &pts, bool ispnp) {
 void saveMask (OutputArray mask, const std::vector<bool> &inliers_mask) {
     if (mask.needed()) {
         const int points_size = (int) inliers_mask.size();
-        mask.create(points_size, 1, CV_8U);
-        auto * maskptr = mask.getMat().ptr<uchar>();
+        Mat tmp_mask(points_size, 1, CV_8U);
+        auto * maskptr = tmp_mask.ptr<uchar>();
         for (int i = 0; i < points_size; i++)
             maskptr[i] = (uchar) inliers_mask[i];
+        tmp_mask.copyTo(mask);
     }
 }
 void setParameters (Ptr<Model> &params, EstimationMethod estimator, const UsacParams &usac_params,
@@ -538,22 +539,25 @@ Mat findEssentialMat (InputArray points1, InputArray points2, InputArray cameraM
 bool solvePnPRansac( InputArray objectPoints, InputArray imagePoints,
        InputArray cameraMatrix, InputArray distCoeffs, OutputArray rvec, OutputArray tvec,
        bool /*useExtrinsicGuess*/, int max_iters, float thr, double conf,
-       OutputArray mask, int method) {
+       OutputArray inliers, int method) {
     Ptr<Model> params;
     setParameters(method, params, cameraMatrix.empty() ? EstimationMethod ::P6P : EstimationMethod ::P3P,
-            thr, max_iters, conf, mask.needed());
+            thr, max_iters, conf, inliers.needed());
     Ptr<RansacOutput> ransac_output;
     if (run(params, imagePoints, objectPoints, params->getRandomGeneratorState(),
             ransac_output, cameraMatrix, noArray(), distCoeffs, noArray())) {
-        saveMask(mask, ransac_output->getInliersMask());
+        if (inliers.needed()) {
+            const auto &inliers_mask = ransac_output->getInliersMask();
+            Mat inliers_;
+            for (int i = 0; i < (int)inliers_mask.size(); i++)
+                if (inliers_mask[i])
+                    inliers_.push_back(i);
+            inliers_.copyTo(inliers);
+        }
         const Mat &model = ransac_output->getModel();
         model.col(0).copyTo(rvec);
         model.col(1).copyTo(tvec);
         return true;
-    }
-    if (mask.needed()){
-        mask.create(std::max(objectPoints.getMat().rows, objectPoints.getMat().cols), 1, CV_8U);
-        mask.setTo(Scalar::all(0));
     }
     return false;
 }
@@ -770,13 +774,14 @@ bool run (const Ptr<const Model> &params, InputArray points1, InputArray points2
     Ptr<MinimalSolver> min_solver;
     Ptr<NonMinimalSolver> non_min_solver;
 
-    Mat points, K1, K2, calib_points, undist_points1, undist_points2;
+    Mat points, calib_points, undist_points1, undist_points2;
+    Matx33d K1, K2;
     int points_size;
     double threshold = params->getThreshold(), max_thr = params->getMaximumThreshold();
     const int min_sample_size = params->getSampleSize();
     if (params->isPnP()) {
         if (! K1_.empty()) {
-            K1 = K1_.getMat(); K1.convertTo(K1, CV_64F);
+            K1 = K1_.getMat();
             if (! dist_coeff1.empty()) {
                 // undistortPoints also calibrate points using K
                 if (points1.isContinuous())
@@ -793,8 +798,8 @@ bool run (const Ptr<const Model> &params, InputArray points1, InputArray points2
     } else {
         if (params->isEssential()) {
             CV_CheckEQ((int)(!K1_.empty() && !K2_.empty()), 1, "Intrinsic matrix must not be empty!");
-            K1 = K1_.getMat(); K1.convertTo(K1, CV_64F);
-            K2 = K2_.getMat(); K2.convertTo(K2, CV_64F);
+            K1 = K1_.getMat();
+            K2 = K2_.getMat();
             if (! dist_coeff1.empty() || ! dist_coeff2.empty()) {
                 // undistortPoints also calibrate points using K
                 if (points1.isContinuous())
@@ -1007,7 +1012,7 @@ bool run (const Ptr<const Model> &params, InputArray points1, InputArray points2
             // convert R to rodrigues and back and recalculate inliers which due to numerical
             // issues can differ
             Mat out, R, newR, newP, t, rvec;
-            if (K1.empty()) {
+            if (K1_.empty()) {
                 usac::Utils::decomposeProjection (ransac_output->getModel(), K1, R, t);
                 Rodrigues(R, rvec);
                 hconcat(rvec, t, out);
