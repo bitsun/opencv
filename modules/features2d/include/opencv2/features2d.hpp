@@ -299,7 +299,7 @@ public:
     */
     CV_WRAP static Ptr<SIFT> create(int nfeatures = 0, int nOctaveLayers = 3,
         double contrastThreshold = 0.04, double edgeThreshold = 10,
-        double sigma = 1.6);
+        double sigma = 1.6,bool double_init_img=true,bool compute_orientation=true);
 
     /** @brief Create SIFT with specified descriptorType.
     @param nfeatures The number of best features to retain. The features are ranked by their scores
@@ -326,7 +326,7 @@ public:
     */
     CV_WRAP static Ptr<SIFT> create(int nfeatures, int nOctaveLayers,
         double contrastThreshold, double edgeThreshold,
-        double sigma, int descriptorType);
+        double sigma, int descriptorType, bool double_init_img = true, bool compute_orientation = true);
 
     CV_WRAP virtual String getDefaultName() const CV_OVERRIDE;
 };

@@ -88,7 +88,7 @@ class SIFT_Impl : public SIFT
 public:
     explicit SIFT_Impl( int nfeatures = 0, int nOctaveLayers = 3,
                           double contrastThreshold = 0.04, double edgeThreshold = 10,
-                          double sigma = 1.6, int descriptorType = CV_32F );
+                          double sigma = 1.6,bool comput_orient=true,bool double_init_img=true, int descriptorType = CV_32F );
 
     //! returns the descriptor size in floats (128)
     int descriptorSize() const CV_OVERRIDE;
@@ -118,24 +118,26 @@ protected:
     CV_PROP_RW double edgeThreshold;
     CV_PROP_RW double sigma;
     CV_PROP_RW int descriptor_type;
+    bool m_compute_orientation;
+    bool m_double_init_image;
 };
 
 Ptr<SIFT> SIFT::create( int _nfeatures, int _nOctaveLayers,
-                     double _contrastThreshold, double _edgeThreshold, double _sigma )
+                     double _contrastThreshold, double _edgeThreshold, double _sigma, bool _double_init_img, bool _compute_orientation)
 {
     CV_TRACE_FUNCTION();
 
-    return makePtr<SIFT_Impl>(_nfeatures, _nOctaveLayers, _contrastThreshold, _edgeThreshold, _sigma, CV_32F);
+    return makePtr<SIFT_Impl>(_nfeatures, _nOctaveLayers, _contrastThreshold, _edgeThreshold, _sigma, _double_init_img, _compute_orientation, CV_32F);
 }
 
 Ptr<SIFT> SIFT::create( int _nfeatures, int _nOctaveLayers,
-                     double _contrastThreshold, double _edgeThreshold, double _sigma, int _descriptorType )
+                     double _contrastThreshold, double _edgeThreshold, double _sigma, int _descriptorType, bool _double_init_img, bool _compute_orientation)
 {
     CV_TRACE_FUNCTION();
 
     // SIFT descriptor supports 32bit floating point and 8bit unsigned int.
     CV_Assert(_descriptorType == CV_32F || _descriptorType == CV_8U);
-    return makePtr<SIFT_Impl>(_nfeatures, _nOctaveLayers, _contrastThreshold, _edgeThreshold, _sigma, _descriptorType);
+    return makePtr<SIFT_Impl>(_nfeatures, _nOctaveLayers, _contrastThreshold, _edgeThreshold, _sigma, _double_init_img, _compute_orientation, _descriptorType);
 }
 
 String SIFT::getDefaultName() const
@@ -292,6 +294,7 @@ public:
         double _contrastThreshold,
         double _edgeThreshold,
         double _sigma,
+        bool _compute_orientation,
         const std::vector<Mat>& _gauss_pyr,
         const std::vector<Mat>& _dog_pyr,
         TLSData<std::vector<KeyPoint> > &_tls_kpts_struct)
@@ -306,6 +309,7 @@ public:
           contrastThreshold(_contrastThreshold),
           edgeThreshold(_edgeThreshold),
           sigma(_sigma),
+          compute_orientation(_compute_orientation),
           gauss_pyr(_gauss_pyr),
           dog_pyr(_dog_pyr),
           tls_kpts_struct(_tls_kpts_struct) { }
@@ -315,7 +319,7 @@ public:
 
         std::vector<KeyPoint>& kpts = tls_kpts_struct.getRef();
 
-        CV_CPU_DISPATCH(findScaleSpaceExtrema, (o, i, threshold, idx, step, cols, nOctaveLayers, contrastThreshold, edgeThreshold, sigma, gauss_pyr, dog_pyr, kpts, range),
+        CV_CPU_DISPATCH(findScaleSpaceExtrema, (o, i, threshold, idx, step, cols, nOctaveLayers, contrastThreshold, edgeThreshold, sigma, compute_orientation, gauss_pyr, dog_pyr, kpts, range),
             CV_CPU_DISPATCH_MODES_ALL);
     }
 private:
@@ -326,6 +330,7 @@ private:
     double contrastThreshold;
     double edgeThreshold;
     double sigma;
+    bool compute_orientation;
     const std::vector<Mat>& gauss_pyr;
     const std::vector<Mat>& dog_pyr;
     TLSData<std::vector<KeyPoint> > &tls_kpts_struct;
@@ -359,7 +364,7 @@ void SIFT_Impl::findScaleSpaceExtrema( const std::vector<Mat>& gauss_pyr, const 
                     nOctaveLayers,
                     contrastThreshold,
                     edgeThreshold,
-                    sigma,
+                    sigma, m_compute_orientation,
                     gauss_pyr, dog_pyr, tls_kpts_struct));
         }
 
@@ -441,9 +446,9 @@ static void calcDescriptors(const std::vector<Mat>& gpyr, const std::vector<KeyP
 //////////////////////////////////////////////////////////////////////////////////////////
 
 SIFT_Impl::SIFT_Impl( int _nfeatures, int _nOctaveLayers,
-           double _contrastThreshold, double _edgeThreshold, double _sigma, int _descriptorType )
+           double _contrastThreshold, double _edgeThreshold, double _sigma, bool comput_orient, bool double_init_img, int _descriptorType )
     : nfeatures(_nfeatures), nOctaveLayers(_nOctaveLayers),
-    contrastThreshold(_contrastThreshold), edgeThreshold(_edgeThreshold), sigma(_sigma), descriptor_type(_descriptorType)
+    contrastThreshold(_contrastThreshold), edgeThreshold(_edgeThreshold), sigma(_sigma), m_compute_orientation(comput_orient), m_double_init_image(double_init_img), descriptor_type(_descriptorType)
 {
 }
 
@@ -470,7 +475,7 @@ void SIFT_Impl::detectAndCompute(InputArray _image, InputArray _mask,
 {
     CV_TRACE_FUNCTION();
 
-    int firstOctave = -1, actualNOctaves = 0, actualNLayers = 0;
+    int firstOctave = m_double_init_image?-1:0, actualNOctaves = nOctaveLayers, actualNLayers = 0;
     Mat image = _image.getMat(), mask = _mask.getMat();
 
     if( image.empty() || image.depth() != CV_8U )

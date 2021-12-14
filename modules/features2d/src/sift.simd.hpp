@@ -143,6 +143,7 @@ void findScaleSpaceExtrema(
     double contrastThreshold,
     double edgeThreshold,
     double sigma,
+    bool compute_orientation,
     const std::vector<Mat>& gauss_pyr,
     const std::vector<Mat>& dog_pyr,
     std::vector<KeyPoint>& kpts,
@@ -411,6 +412,7 @@ public:
         double _contrastThreshold,
         double _edgeThreshold,
         double _sigma,
+        bool _compute_orientation,
         const std::vector<Mat>& _gauss_pyr,
         const std::vector<Mat>& _dog_pyr,
         std::vector<KeyPoint>& kpts)
@@ -425,6 +427,7 @@ public:
           contrastThreshold(_contrastThreshold),
           edgeThreshold(_edgeThreshold),
           sigma(_sigma),
+          compute_orientation(_compute_orientation),
           gauss_pyr(_gauss_pyr),
           dog_pyr(_dog_pyr),
           kpts_(kpts)
@@ -484,6 +487,11 @@ public:
                                             nOctaveLayers, (float)contrastThreshold,
                                             (float)edgeThreshold, (float)sigma) )
                         continue;
+                    if (!compute_orientation) {
+                        kpt.angle = 0.f;
+                        kpts_.push_back(kpt);
+                        continue;
+                    }
                     float scl_octv = kpt.size*0.5f/(1 << o);
                     float omax = calcOrientationHist(gauss_pyr[o*(nOctaveLayers+3) + layer],
                                                      Point(c1, r1),
@@ -519,6 +527,7 @@ private:
     double contrastThreshold;
     double edgeThreshold;
     double sigma;
+    double compute_orientation;
     const std::vector<Mat>& gauss_pyr;
     const std::vector<Mat>& dog_pyr;
     std::vector<KeyPoint>& kpts_;
@@ -538,6 +547,7 @@ void findScaleSpaceExtrema(
     double contrastThreshold,
     double edgeThreshold,
     double sigma,
+    bool compute_orientation,
     const std::vector<Mat>& gauss_pyr,
     const std::vector<Mat>& dog_pyr,
     std::vector<KeyPoint>& kpts,
@@ -547,7 +557,7 @@ void findScaleSpaceExtrema(
 
     findScaleSpaceExtremaT(octave, layer, threshold, idx,
             step, cols,
-            nOctaveLayers, contrastThreshold, edgeThreshold, sigma,
+            nOctaveLayers, contrastThreshold, edgeThreshold, sigma, compute_orientation,
             gauss_pyr, dog_pyr,
             kpts)
         .process(range);
