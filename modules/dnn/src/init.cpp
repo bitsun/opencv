@@ -42,7 +42,9 @@
 #include "precomp.hpp"
 #include <opencv2/dnn/layer.details.hpp>
 
+#if defined(HAVE_PROTOBUF) && !defined(BUILD_PLUGIN)
 #include <google/protobuf/stubs/common.h>
+#endif
 
 namespace cv {
 namespace dnn {
@@ -58,6 +60,7 @@ Mutex& getInitializationMutex()
 // force initialization (single-threaded environment)
 Mutex* __initialization_mutex_initializer = &getInitializationMutex();
 
+#if defined(HAVE_PROTOBUF) && !defined(BUILD_PLUGIN)
 namespace {
 using namespace google::protobuf;
 class ProtobufShutdown {
@@ -71,12 +74,15 @@ public:
     }
 };
 } // namespace
+#endif
 
 void initializeLayerFactory()
 {
     CV_TRACE_FUNCTION();
 
+#if defined(HAVE_PROTOBUF) && !defined(BUILD_PLUGIN)
     static ProtobufShutdown protobufShutdown; CV_UNUSED(protobufShutdown);
+#endif
 
     CV_DNN_REGISTER_LAYER_CLASS(Slice,          SliceLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Split,          SplitLayer);
@@ -92,6 +98,7 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Pooling,        PoolingLayer);
     CV_DNN_REGISTER_LAYER_CLASS(ROIPooling,     PoolingLayer);
     CV_DNN_REGISTER_LAYER_CLASS(PSROIPooling,   PoolingLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Reduce,         ReduceLayer);
     CV_DNN_REGISTER_LAYER_CLASS(LRN,            LRNLayer);
     CV_DNN_REGISTER_LAYER_CLASS(InnerProduct,   InnerProductLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Softmax,        SoftmaxLayer);
@@ -117,6 +124,29 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Round,          RoundLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Sqrt,           SqrtLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Not,            NotLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Acos,           AcosLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Acosh,          AcoshLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Asin,           AsinLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Asinh,          AsinhLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Atan,           AtanLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Atanh,          AtanhLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Cos,            CosLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Cosh,           CoshLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Erf,            ErfLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(HardSwish,      HardSwishLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Sin,            SinLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Sinh,           SinhLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Sign,           SignLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Shrink,         ShrinkLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Softplus,       SoftplusLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Softsign,       SoftsignLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Tan,            TanLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Celu,           CeluLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(HardSigmoid,    HardSigmoidLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Selu,           SeluLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(ThresholdedRelu,ThresholdedReluLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Gelu,           GeluLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(GeluApproximation, GeluApproximationLayer);
     CV_DNN_REGISTER_LAYER_CLASS(BatchNorm,      BatchNormLayer);
     CV_DNN_REGISTER_LAYER_CLASS(MaxUnpool,      MaxUnpoolLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Dropout,        BlankLayer);
@@ -124,9 +154,13 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(Silence,        BlankLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Const,          ConstLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Arg,            ArgLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Reciprocal,     ReciprocalLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Gather,         GatherLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(LayerNormalization, LayerNormLayer);
 
     CV_DNN_REGISTER_LAYER_CLASS(Crop,           CropLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Eltwise,        EltwiseLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(NaryEltwise,    NaryEltwiseLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Permute,        PermuteLayer);
     CV_DNN_REGISTER_LAYER_CLASS(ShuffleChannel, ShuffleChannelLayer);
     CV_DNN_REGISTER_LAYER_CLASS(PriorBox,       PriorBoxLayer);
@@ -149,6 +183,10 @@ void initializeLayerFactory()
     CV_DNN_REGISTER_LAYER_CLASS(LSTM,           LSTMLayer);
     CV_DNN_REGISTER_LAYER_CLASS(GRU,            GRULayer);
     CV_DNN_REGISTER_LAYER_CLASS(CumSum,         CumSumLayer);
+
+    CV_DNN_REGISTER_LAYER_CLASS(Scatter,        ScatterLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(ScatterND,      ScatterNDLayer);
+    CV_DNN_REGISTER_LAYER_CLASS(Tile,           TileLayer);
 
     CV_DNN_REGISTER_LAYER_CLASS(Quantize,         QuantizeLayer);
     CV_DNN_REGISTER_LAYER_CLASS(Dequantize,       DequantizeLayer);

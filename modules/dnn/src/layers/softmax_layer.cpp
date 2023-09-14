@@ -46,8 +46,8 @@
 #include "../op_halide.hpp"
 #include "../op_inf_engine.hpp"
 #include "../ie_ngraph.hpp"
-#include "../op_vkcom.hpp"
 #include "../op_webnn.hpp"
+#include "../op_cann.hpp"
 
 #include <algorithm>
 #include <stdlib.h>
@@ -99,6 +99,10 @@ public:
 
     virtual bool supportBackend(int backendId) CV_OVERRIDE
     {
+#ifdef HAVE_INF_ENGINE
+        if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
+            return true;
+#endif
 #ifdef HAVE_WEBNN
         if (backendId == DNN_BACKEND_WEBNN) {
             // TODO: support logSoftMax
@@ -112,9 +116,7 @@ public:
         return backendId == DNN_BACKEND_OPENCV ||
                backendId == DNN_BACKEND_CUDA ||
                (backendId == DNN_BACKEND_HALIDE && haveHalide() && axisRaw == 1) ||
-               backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH ||
-               (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019 && haveInfEngine() && !logSoftMax) ||
-               (backendId == DNN_BACKEND_VKCOM && haveVulkan());
+               backendId == DNN_BACKEND_CANN;
     }
 
 #ifdef HAVE_OPENCL
@@ -323,18 +325,6 @@ public:
     }
 #endif
 
-    virtual Ptr<BackendNode> initVkCom(const std::vector<Ptr<BackendWrapper> > &inputs) CV_OVERRIDE
-    {
-#ifdef HAVE_VULKAN
-        vkcom::Tensor in = VkComTensor(inputs[0]);
-        int cAxis = normalize_axis(axisRaw, in.dimNum());
-        std::shared_ptr<vkcom::OpBase> op(new vkcom::OpSoftmax(cAxis, logSoftMax));
-        return Ptr<BackendNode>(new VkComBackendNode(inputs, op));
-#endif  // HAVE_VULKAN
-        return Ptr<BackendNode>();
-    }
-
-
     virtual Ptr<BackendNode> initHalide(const std::vector<Ptr<BackendWrapper> > &inputs) CV_OVERRIDE
     {
 #ifdef HAVE_HALIDE
@@ -360,24 +350,42 @@ public:
         return Ptr<BackendNode>();
     }
 
-#ifdef HAVE_DNN_IE_NN_BUILDER_2019
-    virtual Ptr<BackendNode> initInfEngine(const std::vector<Ptr<BackendWrapper> >& inputs) CV_OVERRIDE
+#ifdef HAVE_CANN
+    virtual Ptr<BackendNode> initCann(const std::vector<Ptr<BackendWrapper> > &inputs,
+                                      const std::vector<Ptr<BackendWrapper> > &outputs,
+                                      const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
-        InferenceEngine::DataPtr input = infEngineDataNode(inputs[0]);
+        auto x = inputs[0].dynamicCast<CannBackendWrapper>();
 
-        InferenceEngine::Builder::SoftMaxLayer ieLayer(name);
-        ieLayer.setAxis(normalize_axis(axisRaw, input->getDims().size()));
+        // create operator
+        auto op = std::make_shared<ge::op::SoftmaxV2>(name);
 
-        return Ptr<BackendNode>(new InfEngineBackendNode(ieLayer));
+        // set attributes
+        op->set_attr_axes(ge::Operator::OpListInt(
+            {(int64_t)axisRaw}
+        ));
+
+        // set inputs
+        // set inputs : x
+        auto op_x = nodes[0].dynamicCast<CannBackendNode>()->getOp();
+        op->set_input_x_by_name(*op_x, x->name.c_str());
+        auto x_desc = x->getTensorDesc();
+        op->update_input_desc_x(*x_desc);
+
+        // set outputs
+        auto output_y_desc = std::make_shared<ge::TensorDesc>(ge::Shape(), ge::FORMAT_NCHW, ge::DT_FLOAT);
+        op->update_output_desc_y(*output_y_desc);
+
+        return Ptr<BackendNode>(new CannBackendNode(op));
     }
-#endif  // HAVE_DNN_IE_NN_BUILDER_2019
+#endif // HAVE_CANN
 
 #ifdef HAVE_DNN_NGRAPH
     virtual Ptr<BackendNode> initNgraph(const std::vector<Ptr<BackendWrapper> >& inputs,
                                         const std::vector<Ptr<BackendNode> >& nodes) CV_OVERRIDE
     {
         auto& ieInpNode = nodes[0].dynamicCast<InfEngineNgraphNode>()->node;
-        int axis = normalize_axis(axisRaw, ieInpNode->get_shape().size());
+        int axis = normalize_axis(axisRaw, ieInpNode.get_shape().size());
         auto softmax = std::make_shared<ngraph::op::v1::Softmax>(ieInpNode, axis);
         if (logSoftMax)
             return Ptr<BackendNode>(new InfEngineNgraphNode(std::make_shared<ngraph::op::v0::Log>(softmax)));
@@ -399,6 +407,8 @@ public:
         }
         params.blobs.clear();
         params.blobs.push_back(lookUpTable);
+        params.set("input_scale", inpScale);
+        params.set("input_zeropoint", zeropoints[0][0]);
         return true;
     }
 

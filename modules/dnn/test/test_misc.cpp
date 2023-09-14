@@ -63,6 +63,85 @@ TEST(imagesFromBlob, Regression)
     }
 }
 
+TEST(blobFromImageWithParams_4ch, NHWC_scalar_scale)
+{
+    Mat img(10, 10, CV_8UC4, cv::Scalar(0,1,2,3));
+    std::vector<double> factorVec = {0.1, 0.2, 0.3, 0.4};
+
+    Scalar scalefactor(factorVec[0], factorVec[1], factorVec[2], factorVec[3]);
+
+    Image2BlobParams param;
+    param.scalefactor = scalefactor;
+    param.datalayout = DNN_LAYOUT_NHWC;
+    Mat blob = dnn::blobFromImageWithParams(img, param); // [1, 10, 10, 4]
+
+    float* blobPtr = blob.ptr<float>(0);
+    std::vector<float> targetVec = {(float )factorVec[0] * 0, (float )factorVec[1] * 1, (float )factorVec[2] * 2, (float )factorVec[3] * 3}; // Target Value.
+    for (int hi = 0; hi < 10; hi++)
+    {
+        for (int wi = 0; wi < 10; wi++)
+        {
+            float* hwPtr = blobPtr + hi * 10 * 4 + wi * 4;
+
+            // Check equal
+            EXPECT_NEAR(hwPtr[0], targetVec[0], 1e-5);
+            EXPECT_NEAR(hwPtr[1], targetVec[1], 1e-5);
+            EXPECT_NEAR(hwPtr[2], targetVec[2], 1e-5);
+            EXPECT_NEAR(hwPtr[3], targetVec[3], 1e-5);
+        }
+    }
+}
+
+TEST(blobFromImageWithParams_4ch, letter_box)
+{
+    Mat img(40, 20, CV_8UC4, cv::Scalar(0,1,2,3));
+
+    // Construct target mat.
+    Mat targetCh[4];
+    // The letterbox will add zero at the left and right of output blob.
+    // After the letterbox, every row data would have same value showing as valVec.
+    std::vector<uint8_t> valVec = {0,0,0,0,0, 1,1,1,1,1,1,1,1,1,1, 0,0,0,0,0};
+    Mat rowM(1, 20, CV_8UC1, valVec.data());
+
+    for(int i = 0; i < 4; i++)
+    {
+        targetCh[i] = rowM * i;
+    }
+
+    Mat targetImg;
+    merge(targetCh, 4, targetImg);
+    Size targeSize(20, 20);
+
+    Image2BlobParams param;
+    param.size = targeSize;
+    param.paddingmode = DNN_PMODE_LETTERBOX;
+    Mat blob = dnn::blobFromImageWithParams(img, param);
+    Mat targetBlob = dnn::blobFromImage(targetImg, 1.0, targeSize); // only convert data from uint8 to float32.
+    EXPECT_EQ(0, cvtest::norm(targetBlob, blob, NORM_INF));
+}
+
+TEST(blobFromImagesWithParams_4ch, multi_image)
+{
+    Mat img(10, 10, CV_8UC4, cv::Scalar(0, 1, 2, 3));
+    Scalar scalefactor(0.1, 0.2, 0.3, 0.4);
+
+    Image2BlobParams param;
+    param.scalefactor = scalefactor;
+    param.datalayout = DNN_LAYOUT_NHWC;
+
+    Mat blobs = blobFromImagesWithParams(std::vector<Mat> { img, 2*img }, param);
+    vector<Range> ranges;
+    ranges.push_back(Range(0, 1));
+    ranges.push_back(Range(0, blobs.size[1]));
+    ranges.push_back(Range(0, blobs.size[2]));
+    ranges.push_back(Range(0, blobs.size[3]));
+    Mat blob0 = blobs(ranges);
+    ranges[0] = Range(1, 2);
+    Mat blob1 = blobs(ranges);
+
+    EXPECT_EQ(0, cvtest::norm(2*blob0, blob1, NORM_INF));
+}
+
 TEST(readNet, Regression)
 {
     Net net = readNet(findDataFile("dnn/squeezenet_v1.1.prototxt"),
@@ -117,12 +196,7 @@ void test_readNet_IE_do_not_call_setInput(Backend backendId)
     const std::string& model = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& proto = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net net = readNet(model, proto);
     net.setPreferableBackend(backendId);
@@ -462,12 +536,7 @@ TEST_P(Async, model_optimizer_pipeline_set_and_forward_single)
     const std::string& model = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& proto = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net netSync = readNet(model, proto);
     netSync.setPreferableBackend(backendId);
@@ -523,12 +592,7 @@ TEST_P(Async, model_optimizer_pipeline_set_and_forward_all)
     const std::string& model = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& proto = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net netSync = readNet(model, proto);
     netSync.setPreferableBackend(backendId);
@@ -586,12 +650,7 @@ TEST_P(Async, create_layer_pipeline_set_and_forward_all)
     if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH && dtype == CV_8U)
         applyTestTag(CV_TEST_TAG_DNN_SKIP_IE_NGRAPH);
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net netSync;
     Net netAsync;
@@ -697,12 +756,7 @@ TEST_P(Test_Model_Optimizer, forward_two_nets)
     const std::string& model = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& proto = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net net0 = readNet(model, proto);
     net0.setPreferableTarget(targetId);
@@ -741,12 +795,7 @@ TEST_P(Test_Model_Optimizer, readFromBuffer)
     const std::string& weightsFile = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& modelFile = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net net1 = readNetFromModelOptimizer(modelFile, weightsFile);
     net1.setPreferableBackend(backendId);
@@ -793,12 +842,7 @@ TEST_P(Test_Model_Optimizer, flexible_inputs)
     const std::string& model = findDataFile("dnn/layers/layer_convolution.bin");
     const std::string& proto = findDataFile("dnn/layers/layer_convolution.xml");
 
-    if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_2019)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NN_BUILDER_API);
-    else if (backendId == DNN_BACKEND_INFERENCE_ENGINE_NGRAPH)
-        setInferenceEngineBackendType(CV_DNN_BACKEND_INFERENCE_ENGINE_NGRAPH);
-    else
-        FAIL() << "Unknown backendId";
+    ASSERT_EQ(DNN_BACKEND_INFERENCE_ENGINE_NGRAPH, backendId);
 
     Net net0 = readNet(model, proto);
     net0.setPreferableTarget(targetId);
@@ -842,6 +886,12 @@ TEST_P(Test_two_inputs, basic)
     Backend backendId = get<0>(get<2>(GetParam()));
     Target targetId = get<1>(get<2>(GetParam()));
 
+    int type1 = get<0>(GetParam());
+    int type2 = get<1>(GetParam());
+
+    if (backendId == DNN_BACKEND_VKCOM && !(type1 == CV_32F && type2 == CV_32F))
+        applyTestTag(CV_TEST_TAG_DNN_SKIP_VULKAN);
+
     Net net;
     LayerParams lp;
     lp.type = "Eltwise";
@@ -851,8 +901,8 @@ TEST_P(Test_two_inputs, basic)
     net.connect(0, 1, eltwiseId, 1);  // connect to a second input
 
     int inpSize[] = {1, 2, 3, 4};
-    Mat firstInp(4, &inpSize[0], get<0>(GetParam()));
-    Mat secondInp(4, &inpSize[0], get<1>(GetParam()));
+    Mat firstInp(4, &inpSize[0], type1);
+    Mat secondInp(4, &inpSize[0], type2);
     randu(firstInp, 0, 100);
     randu(secondInp, 0, 100);
 
@@ -873,8 +923,9 @@ TEST_P(Test_two_inputs, basic)
     Mat ref;
     addWeighted(firstInp, kScale, secondInp, kScaleInv, 0, ref, CV_32F);
 
-    double l1 = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_MYRIAD) ? 0.06 : 1e-6;
-    double lInf = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_MYRIAD) ? 0.3 : 1e-5;
+    double l1 = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_MYRIAD || targetId == DNN_TARGET_CUDA_FP16) ? 0.06 : 1e-6;
+    double lInf = (targetId == DNN_TARGET_OPENCL_FP16 || targetId == DNN_TARGET_MYRIAD || targetId == DNN_TARGET_CUDA_FP16) ? 0.3 : 1e-5;
+
     normAssert(out, ref, "", l1, lInf);
 
     if (cvtest::debugLevel > 0 || HasFailure())
